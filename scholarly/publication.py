@@ -94,7 +94,8 @@ class Publication(object):
 
     def _get_authorlist(self, authorinfo):
         authorlist = list()
-        text = authorinfo.split(' - ')[0]
+        text = authorinfo.text.replace(u'\xa0', u' ')
+        text = text.split(' - ')[0]
         for i in text.split(','):
             i = i.strip()
             if bool(re.search(r'\d', i)):
@@ -126,25 +127,12 @@ class Publication(object):
         if title.find('a'):
             self._url = title.find('a')['href']
 
-<<<<<<< HEAD
         authorinfo = databox.find('div', class_='gs_a')
         self._bib["author"] = self._get_authorlist(authorinfo)
 
         try:
             self._bib['venue'], self._bib['year'] = authorinfo.text.split(
                 ' - ')[1].split(',')
-=======
-        authorinfo = databox.find('div', class_='gs_a').text
-        authorinfo = authorinfo.replace(u'\xa0', u' ')       # NBSP
-        authorinfo = authorinfo.replace(u'&amp;', u'&')      # Ampersand
-        self.bib["author"] = self._get_authorlist(authorinfo)
-
-        try:
-            venueyear = authorinfo.split(' - ')[1].split(',')
-            self.bib['venue'] = ''.join(venueyear[0:-1])
-            self.bib['year'] = venueyear[-1]
-            self.bib['year'] = self.bib['year'].strip()
->>>>>>> 17e70e56e600f2e664a959776b98120d8b1ecc9d
         except Exception:
             self._bib['venue'], self._bib['year'] = 'NA', 'NA'
 

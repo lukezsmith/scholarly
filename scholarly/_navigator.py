@@ -3,7 +3,6 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
-from typing import Callable
 from bs4 import BeautifulSoup
 
 import codecs
@@ -21,6 +20,8 @@ from .publication import _SearchScholarIterator
 from .author import Author
 from .publication import Publication
 
+_GOOGLEID = hashlib.md5(str(random.random()).encode('utf-8')).hexdigest()[:16]
+_COOKIES = {'GSP': 'ID={0}:CF=4'.format(_GOOGLEID)}
 _HEADERS = {
     'accept-language': 'en-US,en',
     'accept': 'text/html,application/xhtml+xml,application/xml'
@@ -48,7 +49,6 @@ class Navigator(object, metaclass=Singleton):
         super(Navigator, self).__init__()
         logging.basicConfig(filename='scholar.log', level=logging.INFO)
         self.logger = logging.getLogger('scholarly')
-        self._proxy_gen = None
         # If we use a proxy or Tor, we set this to True
         self._proxy_works = False
         # If we have a Tor server that we can refresh, we set this to True
@@ -59,7 +59,7 @@ class Navigator(object, metaclass=Singleton):
         # Setting requests timeout to be reasonably long
         # to accomodate slowness of the Tor network
         self._TIMEOUT = 10
-        self._max_retries = 5
+        self._MAX_RETRIES = 5
 
     def __del__(self):
         if self._tor_process:
@@ -84,7 +84,7 @@ user http or https. Aborting."
         #time.sleep(random.uniform(1, 5))
         resp = None
         tries = 0
-        while tries < self._max_retries:
+        while tries < self._MAX_RETRIES:
             # If proxy/Tor was setup, use it.
             # Otherwise the local IP is used
             session = requests.Session()
@@ -93,8 +93,6 @@ user http or https. Aborting."
 
             try:
                 _HEADERS['User-Agent'] = UserAgent().random
-                _GOOGLEID = hashlib.md5(str(random.random()).encode('utf-8')).hexdigest()[:16]
-                _COOKIES = {'GSP': 'ID={0}:CF=4'.format(_GOOGLEID)}
 
                 resp = session.get(pagerequest,
                                    headers=_HEADERS,
@@ -102,19 +100,22 @@ user http or https. Aborting."
                                    timeout=self._TIMEOUT)
 
                 if resp.status_code == 200:
-                    if not self._has_captcha(resp.text):
+                    if self._has_captcha(resp.text):
+                        raise Exception("Got a CAPTCHA. Retrying.")
+                    else:
+                        session.close()
                         return resp.text
-                    self.logger.info("Got a CAPTCHA. Retrying.")
                 else:
                     self.logger.info(f"""Response code {resp.status_code}.
                                     Retrying...""")
+                    raise Exception(f"Status code {resp.status_code}")
 
             except Exception as e:
                 err = f"Exception {e} while fetching page. Retrying."
                 self.logger.info(err)
-            finally:
+                # Check if Tor is running and refresh it
+                self.logger.info("Refreshing Tor ID...")
                 session.close()
-<<<<<<< HEAD
                 if self._can_refresh_tor:
                     self._refresh_tor_id(
                         self._tor_control_port, self._tor_password)
@@ -123,25 +124,6 @@ user http or https. Aborting."
                     # we only increase the tries when we cannot refresh id
                     # to avod an infinite loop
                     tries += 1
-=======
-
-            # Check if Tor is running and refresh it
-            if self._can_refresh_tor:
-                self.logger.info("Refreshing Tor ID...")
-                self._refresh_tor_id(self._tor_control_port, self._tor_password)
-                time.sleep(5) # wait for the refresh to happen
-            elif self._proxy_gen:
-                tries += 1
-                self.logger.info(f"Try #{tries} failed. Switching proxy.")
-                # Try to get another proxy
-                new_proxy = self._proxy_gen()
-                while (not self._use_proxy(new_proxy)):
-                    new_proxy = self._proxy_gen()
-            else:
-                # we only increase the tries when we cannot refresh id
-                # to avoid an infinite loop
-                tries += 1
->>>>>>> 17e70e56e600f2e664a959776b98120d8b1ecc9d
         raise Exception("Cannot fetch the page from Google Scholar.")
 
     def _check_proxy(self, proxies) -> bool:
@@ -155,21 +137,13 @@ user http or https. Aborting."
             session.proxies = proxies
             try:
                 # Changed to twitter so we dont ping google twice every time
-<<<<<<< HEAD
                 resp = session.get("http://www.twitter.com",
                                    timeout=self._TIMEOUT)
                 self.logger.info("Proxy Works!")
                 return resp.status_code == 200
-=======
-                resp = session.get("http://www.twitter.com", timeout=self._TIMEOUT)
-                if resp.status_code == 200:
-                    self.logger.info("Proxy works!")
-                    return True
->>>>>>> 17e70e56e600f2e664a959776b98120d8b1ecc9d
             except Exception as e:
-                self.logger.info(f"Exception while testing proxy: {e}")
-
-            return False
+                self.logger.info(f"Proxy not working: Exception {e}")
+                return False
 
     def _refresh_tor_id(self, tor_control_port: int, password: str) -> bool:
         """Refreshes the id by using a new ToR node.
@@ -190,37 +164,26 @@ user http or https. Aborting."
             self.logger.info(err)
             return False
 
-    def _set_retries(self, num_retries: int) -> None:
-        if (num_retries < 0):
-            raise ValueError("num_retries must not be negative")
-        self._max_retries = num_retries
-
-    def _set_proxy_generator(self, gen: Callable[..., str]) -> bool:
-        self._proxy_gen = gen
-        return True
-
-    def _use_proxy(self, http: str, https: str = None) -> bool:
+    def _use_proxy(self, http: str, https: str) -> bool:
         """Allows user to set their own proxy for the connection session.
-        Sets the proxy, and checks if it works.
+        Sets the proxy, and checks if it woks,
 
         :param http: the http proxy
         :type http: str
-        :param https: the https proxy (default to the same as http)
+        :param https: the https proxy
         :type https: str
         :returns: if the proxy works
         :rtype: {bool}
         """
-
-        if https is None:
-            https = http
+        self.logger.info("Enabling proxies: http=%r https=%r", http, https)
 
         proxies = {'http': http, 'https': https}
         self._proxy_works = self._check_proxy(proxies)
         if self._proxy_works:
-            self.logger.info(f"Enabling proxies: http={http} https={https}")
             self.proxies = proxies
         else:
-            self.logger.info(f"Proxy {http} does not seem to work.")
+            self.proxies = {'http': None, 'https': None}
+
         return self._proxy_works
 
     def _setup_tor(self, tor_sock_port: int, tor_control_port: int, tor_password: str):
